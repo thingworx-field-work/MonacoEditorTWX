@@ -11,7 +11,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/ptc-iot-sharing/MonacoEditorTWX.git"
+        "url": "https://github.com/thingworx-field-work/MonacoEditorTWX.git"
     },
     "publishConfig": {
         "access": "public",
