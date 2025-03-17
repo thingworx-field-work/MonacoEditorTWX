@@ -5,9 +5,9 @@
     "description": "Replaces the out of the box code editor in the old composer with a new one.",
     "author": "placatus@iqnox.com",
     "minimumThingWorxVersion": "6.0.0",
-    "homepage": "https://github.com/ptc-iot-sharing/MonacoEditorTWX",
+    "homepage": "https://github.com/thingworx-field-work/MonacoEditorTWX",
     "autoUpdate": {
-        "giteaURL": "https://api.github.com/repos/ptc-iot-sharing/MonacoEditorTWX/releases/latest"
+        "giteaURL": "https://api.github.com/repos/thingworx-field-work/MonacoEditorTWX/releases/latest"
     },
     "repository": {
         "type": "git",
