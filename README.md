@@ -24,6 +24,19 @@ Notes:
 * The last Monaco Editor extension that is compatible with the Old Composer (8.3 or earlier) is version [v1.16.1](https://github.com/ptc-iot-sharing/MonacoEditorTWX/releases/tag/v1.16.1). Import of the zip package is needed for this version.
 * The extension listed under [**Releases**](https://github.com/ptc-iot-sharing/MonacoEditorTWX/releases) should only be installed if you want to use the Monaco Editor as a ThingWorx mashup widget, to display code in a mashup. It should be the one named _MonacoScriptEditor-VERSION.zip_.
 
+### Content Security Policy (CSP) settings
+
+In recent versions of ThingWorx, PTC introduced the capability to enable and customize [Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP) rules. These are important for securing the application environment and managing what resources can be loaded. See the [official ThingWorx documentation](https://support.ptc.com/help/thingworx/platform/r9.7/en/#page/ThingWorx/Help/Composer/Security/ContentSecurityPolicy.html#).
+
+In order for the ThingWorx Monaco Script Editor to work properly, the following additions are required. Please see the [official ThingWorx documentation](https://support.ptc.com/help/thingworx/platform/r9.7/en/#page/ThingWorx/Help/Composer/Security/ConfiguringContentSecurityPolicyHeaderValues.html#) for how to add these settings to your ThingWorx instance.
+
+
+| Directive    | Value                      | Additional notes about this setting                                  |
+| ------------ | -------------------------- | -------------------------------------------------------------------- |
+| `font-src`   | `https://cdn.jsdelivr.net` | For loading the font with icons used within the editor               |
+| `script-src` | `https://cdn.jsdelivr.net` | For the editor itself to be loaded from CDN                          |
+| `worker-src` | `blob:`                    | For the editor to be able to initialize WebWorkers that make it fast |
+
 ### Removing
 
 To disable the editor, just disable the _user script_ in the addon settings.
