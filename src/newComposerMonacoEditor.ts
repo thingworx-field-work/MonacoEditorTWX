@@ -13,7 +13,75 @@ enum EditorType {
     GENERIC_EDITOR = "generic-editor"
 }
 
+const CODEMIRROR_COMPAT_MODULES = [
+    "codemirror",
+    "codemirror/mode/css/css",
+    "codemirror/mode/javascript/javascript",
+    "codemirror/mode/xml/xml",
+    "codemirror/mode/sql/sql",
+    "codemirror/addon/selection/mark-selection",
+    "codemirror/addon/search/search",
+    "codemirror/addon/search/searchcursor",
+    "codemirror/addon/dialog/dialog",
+    "codemirror/addon/edit/matchbrackets",
+    "codemirror/addon/search/match-highlighter",
+    "codemirror/addon/hint/show-hint",
+    "codemirror/addon/hint/javascript-hint",
+    "codemirror/addon/fold/foldcode",
+    "codemirror/addon/fold/foldgutter",
+    "codemirror/addon/fold/brace-fold",
+    "codemirror/addon/fold/comment-fold",
+    "codemirror/addon/fold/indent-fold",
+];
+
+const CODEMIRROR_GUTTER_MESSAGE_MANAGER =
+    "thingworx-ui-platform/features/details/editor/codemirror-gutter-message-manager";
+
+function getAmdContext() {
+    const requirejs = window["requirejs"] || window["require"];
+    return requirejs && requirejs.s && requirejs.s.contexts && requirejs.s.contexts._;
+}
+
+function isAmdModuleKnown(moduleName: string): boolean {
+    const context = getAmdContext();
+    if (!context) {
+        return false;
+    }
+
+    return Boolean(
+        (context.defined && context.defined[moduleName]) ||
+            (context.specified && context.specified[moduleName]) ||
+            (context.registry && context.registry[moduleName])
+    );
+}
+
+function defineAmdModuleIfMissing(moduleName: string, factory: () => any) {
+    if (isAmdModuleKnown(moduleName)) {
+        return;
+    }
+
+    window["define"](moduleName, [], factory);
+}
+
+function installCodeMirrorCompatibilityShim() {
+    CODEMIRROR_COMPAT_MODULES.forEach((moduleName) => {
+        defineAmdModuleIfMissing(moduleName, () => {
+            if (moduleName === "codemirror") {
+                return window["CodeMirror"] || {};
+            }
+
+            return {};
+        });
+    });
+
+    defineAmdModuleIfMissing(CODEMIRROR_GUTTER_MESSAGE_MANAGER, () => ({
+        CodemirrorGutterMessageManager: class CodemirrorGutterMessageManager {},
+    }));
+}
+
 function load() {
+    installCodeMirrorCompatibilityShim();
+
     window["define"](
       "thingworx-ui-platform/features/details/editor/abstract-editor",
       [
@@ -450,7 +518,12 @@ function load() {
                     console.log('Monaco is starting initialization with options...', );
                 }
 
-                if (!this.cmTextarea || !this.element) {
+                if (!this.element) {
+                    return;
+                }
+
+                const container = this.cmTextarea ? this.cmTextarea.parentElement : this.element.querySelector(".script-control");
+                if (!container) {
                     return;
                 }
 
@@ -509,7 +582,6 @@ function load() {
                     }
                 }
 
-                let container = this.cmTextarea.parentElement;
                 let modelName;
                 if (this.editorType == EditorType.SERVICE_EDITOR || this.editorType == EditorType.SUBSCRIPTION_EDITOR) {
                     if(currentEditedModel) {
@@ -520,8 +592,12 @@ function load() {
                 } else {
                     modelName =  Math.random().toString(36).substring(7);
                 }
-                // Hide the existing text area. Don't completely wipe it because it gets reused in the subscription editor
-                this.cmTextarea.style.display = 'none';
+                // Hide the legacy textarea when present. ThingWorx 10.1 uses an empty .script-control mount instead.
+                if (this.cmTextarea) {
+                    this.cmTextarea.style.display = 'none';
+                } else {
+                    container.innerHTML = "";
+                }
                 // Create a new editor, using the class inferred from the language id
                 this.codeMirror = new editorClass(
                     container,
