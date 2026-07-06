@@ -335,20 +335,26 @@ export class MonacoCodeEditor {
             return str.replace(/\/$/, "");
         }
 
+        function stripUrlCredentials(str: string) {
+            try {
+                const url = new URL(str, window.location.origin);
+                url.username = "";
+                url.password = "";
+                return url.toString();
+            } catch (e) {
+                return str;
+            }
+        }
+
+        const publicPath = stripUrlCredentials(typeof __webpack_public_path__ === "string" ? __webpack_public_path__ : "");
+
         (window as any).MonacoEnvironment = {
             globalAPI: true,
             getWorkerUrl: function (moduleId, label) {
-                const pathPrefix = typeof __webpack_public_path__ === "string" ? __webpack_public_path__ : "";
+                const pathPrefix = publicPath;
                 const result = (pathPrefix ? stripTrailingSlash(pathPrefix) + "/" : "") + workerPaths[label];
                 if (/^((http:)|(https:)|(file:)|(\/\/))/.test(result)) {
-                    const currentUrl = String(window.location);
-                    const currentOrigin = currentUrl.substr(
-                        0,
-                        currentUrl.length -
-                            window.location.hash.length -
-                            window.location.search.length -
-                            window.location.pathname.length
-                    );
+                    const currentOrigin = window.location.origin;
                     if (result.substring(0, currentOrigin.length) !== currentOrigin) {
                         const js = "/*" + label + '*/importScripts("' + result + '");';
                         const blob = new Blob([js], { type: "application/javascript" });
@@ -375,10 +381,10 @@ export class MonacoCodeEditor {
 
         // Customize the typescript worker to add the methods needed by the script editor as well as CodeHost
         monaco.languages.typescript.typescriptDefaults.setWorkerOptions({
-            customWorkerPath: __webpack_public_path__ + "tsCustomWorker.bundle.js",
+            customWorkerPath: publicPath + "tsCustomWorker.bundle.js",
         });
         monaco.languages.typescript.javascriptDefaults.setWorkerOptions({
-            customWorkerPath: __webpack_public_path__ + "tsCustomWorker.bundle.js",
+            customWorkerPath: publicPath + "tsCustomWorker.bundle.js",
         });
     }
 

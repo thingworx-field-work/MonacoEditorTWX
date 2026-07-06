@@ -5,11 +5,15 @@ import { DataShape, FieldDefinition } from './types';
 const MIME_APPLICATION_JSON = "application/json";
 const MIME_TEXT_XML = "text/xml";
 
+function platformUrl(path: string): string {
+    return `${window.location.origin}${path}`;
+}
+
 /**
  * Gets the metadata of all the datashapes in the system. Uses the export of all datashapes
  */
 export async function getDataShapeDefinitions(): Promise<DataShape[]> {
-    const response = await fetch(`/Thingworx/Exporter/DataShapes?universal=true`, {
+    const response = await fetch(platformUrl(`/Thingworx/Exporter/DataShapes?universal=true`), {
         method: 'GET',
         headers: {
             'Accept': MIME_TEXT_XML
@@ -41,7 +45,7 @@ export async function getDataShapeDefinitions(): Promise<DataShape[]> {
  * @param  {string} searchTerm The entity to search for. Only the prefix can be specified.
  */
 export async function spotlightSearch(entityType, searchTerm): Promise<any> {
-    const response = await fetch(`/Thingworx/Resources/SearchFunctions/Services/SpotlightSearch`, {
+    const response = await fetch(platformUrl(`/Thingworx/Resources/SearchFunctions/Services/SpotlightSearch`), {
         method: 'POST',
         body: JSON.stringify({
             searchExpression: searchTerm + "*",
@@ -95,7 +99,7 @@ export function sanitizeEntityName(entityName: string): string {
 }
 
 export async function getScriptFunctionLibraries(): Promise<any[]> {
-    const response = await fetch(`/Thingworx/ScriptFunctionLibraries`, {
+    const response = await fetch(platformUrl(`/Thingworx/ScriptFunctionLibraries`), {
         headers: {
             'Accept': MIME_APPLICATION_JSON
         }
@@ -103,7 +107,7 @@ export async function getScriptFunctionLibraries(): Promise<any[]> {
     const libraries = await response.json();
     const result = [];
     for (const scriptFunction of libraries.rows) {
-        const scriptResponse = await fetch(`/Thingworx/ScriptFunctionLibraries/${scriptFunction.name}/FunctionDefinitions`, {
+        const scriptResponse = await fetch(platformUrl(`/Thingworx/ScriptFunctionLibraries/${scriptFunction.name}/FunctionDefinitions`), {
             headers: {
                 'Accept': MIME_APPLICATION_JSON
             }
@@ -118,7 +122,7 @@ export function isGenericService(serviceDefinition: { sourceName: string, source
 }
 
 export async function getEntityMetadata(entityType: string, entityName: string): Promise<any> {
-    const response = await fetch(`/Thingworx/${entityType}/${encodeURIComponent(entityName)}/Metadata`, {
+    const response = await fetch(platformUrl(`/Thingworx/${entityType}/${encodeURIComponent(entityName)}/Metadata`), {
         headers: {
             'Accept': MIME_APPLICATION_JSON
         }
@@ -127,7 +131,7 @@ export async function getEntityMetadata(entityType: string, entityName: string):
 }
 
 export async function getEntityInstancesMetadata(entityType: string, entityName: string): Promise<any> {
-    const response = await fetch(`/Thingworx/${entityType}/${encodeURIComponent(entityName)}/InstanceMetadata`, {
+    const response = await fetch(platformUrl(`/Thingworx/${entityType}/${encodeURIComponent(entityName)}/InstanceMetadata`), {
         headers: {
             'Accept': MIME_APPLICATION_JSON
         }
@@ -136,7 +140,7 @@ export async function getEntityInstancesMetadata(entityType: string, entityName:
 }
 
 export async function getThingPropertyValues(entityName: string): Promise<any> {
-    const response = await fetch(`/Thingworx/Things/${encodeURIComponent(entityName)}/Properties`, {
+    const response = await fetch(platformUrl(`/Thingworx/Things/${encodeURIComponent(entityName)}/Properties`), {
         headers: {
             'Accept': MIME_APPLICATION_JSON
         }
