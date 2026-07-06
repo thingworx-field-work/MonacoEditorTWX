@@ -1,3 +1,10 @@
+## [1.26.2](https://github.com/thingworx-field-work/MonacoEditorTWX/compare/v1.26.1...v1.26.2) (2026-07-06)
+
+
+### Bug Fixes
+
+* add compatibility with thingworx 10.1 ([5c7ad5e](https://github.com/thingworx-field-work/MonacoEditorTWX/commit/5c7ad5ebf39b51e9b0f4112df7867c0830b3e480))
+
 ## [1.26.1](https://github.com/ptc-iot-sharing/MonacoEditorTWX/compare/v1.26.0...v1.26.1) (2024-02-11)
 
 
