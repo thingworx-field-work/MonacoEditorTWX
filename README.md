@@ -21,8 +21,8 @@ If your company policy disallows the use of browser extensions, please the refer
 Notes:
 * The userscript above will always reference the latest released version of Monaco Editor.
 * In the New Composer (Thingworx 8.4 and later), all editors will be replaced with the Monaco editor, including the script editor, subscription editor, CSS editor, expression editor and other JSON/XML editors.
-* The last Monaco Editor extension that is compatible with the Old Composer (8.3 or earlier) is version [v1.16.1](https://github.com/ptc-iot-sharing/MonacoEditorTWX/releases/tag/v1.16.1). Import of the zip package is needed for this version.
-* The extension listed under [**Releases**](https://github.com/ptc-iot-sharing/MonacoEditorTWX/releases) should only be installed if you want to use the Monaco Editor as a ThingWorx mashup widget, to display code in a mashup. It should be the one named _MonacoScriptEditor-VERSION.zip_.
+* The last Monaco Editor extension that is compatible with the Old Composer (8.3 or earlier) is version [v1.16.1](https://github.com/thingworx-field-work/MonacoEditorTWX/releases/tag/v1.16.1). Import of the zip package is needed for this version.
+* The extension listed under [**Releases**](https://github.com/thingworx-field-work/MonacoEditorTWX/releases) should only be installed if you want to use the Monaco Editor as a ThingWorx mashup widget, to display code in a mashup. It should be the one named _MonacoScriptEditor-VERSION.zip_.
 
 ### Content Security Policy (CSP) settings
 
@@ -128,7 +128,7 @@ In the new composer, press <kbd>F1</kbd>, select _Switch to Typescript_. The rev
 
 This option requires access to the install of ThingWorx, and will enable MonacoEditor for all developers using a thingworx environment. However, when updating ThingWorx this change needs to be reapplied.
 
-   0. Import the ThingWorx extension listed under [**Releases**](https://github.com/ptc-iot-sharing/MonacoEditorTWX/releases). It should be the one named _MonacoScriptEditor-VERSION.zip_.
+   0. Import the ThingWorx extension listed under [**Releases**](https://github.com/thingworx-field-work/MonacoEditorTWX/releases). It should be the one named _MonacoScriptEditor-VERSION.zip_.
    1. On the server hosting Thingworx, navigate to the tomcat folder, then to `apache-tomcat/webapps/Thingworx/Composer`. 
    2. Edit the file `index.html`.
    3. After _line 9_, after the existing `<script>` tag, add the following: 
@@ -139,7 +139,7 @@ This option requires access to the install of ThingWorx, and will enable MonacoE
 
 ## Reporting issues
 
-Issues and suggestions can be reported at [**Issues**](/ptc-iot-sharing/MonacoEditorTWX/issues). They will be resolved if there is time available.
+Issues and suggestions can be reported at [**Issues**](https://github.com/thingworx-field-work/MonacoEditorTWX/issues). They will be resolved if there is time available.
 
 
 # Disclaimer
