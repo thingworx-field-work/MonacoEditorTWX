@@ -37,6 +37,7 @@ In order for the ThingWorx Monaco Script Editor to work properly, the following 
 | `script-src` | `https://cdn.jsdelivr.net` | For the editor itself to be loaded from CDN                          |
 | `worker-src` | `blob:`                    | For the editor to be able to initialize WebWorkers that make it fast |
 
+
 ### Removing
 
 To disable the editor, just disable the _user script_ in the addon settings.
