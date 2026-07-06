@@ -1,3 +1,10 @@
+## [1.26.3](https://github.com/thingworx-field-work/MonacoEditorTWX/compare/v1.26.2...v1.26.3) (2026-07-06)
+
+
+### Bug Fixes
+
+* compatiblity with thingworx 10.1. Fix [#59](https://github.com/thingworx-field-work/MonacoEditorTWX/issues/59), 61 ([5a1d2dc](https://github.com/thingworx-field-work/MonacoEditorTWX/commit/5a1d2dcd0825079c0cf1b75fac472ad4f6cc9597))
+
 ## [1.26.2](https://github.com/thingworx-field-work/MonacoEditorTWX/compare/v1.26.1...v1.26.2) (2026-07-06)
 
 
