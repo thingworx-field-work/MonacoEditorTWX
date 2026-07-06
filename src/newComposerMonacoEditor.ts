@@ -13,27 +13,6 @@ enum EditorType {
     GENERIC_EDITOR = "generic-editor"
 }
 
-const CODEMIRROR_COMPAT_MODULES = [
-    "codemirror",
-    "codemirror/mode/css/css",
-    "codemirror/mode/javascript/javascript",
-    "codemirror/mode/xml/xml",
-    "codemirror/mode/sql/sql",
-    "codemirror/addon/selection/mark-selection",
-    "codemirror/addon/search/search",
-    "codemirror/addon/search/searchcursor",
-    "codemirror/addon/dialog/dialog",
-    "codemirror/addon/edit/matchbrackets",
-    "codemirror/addon/search/match-highlighter",
-    "codemirror/addon/hint/show-hint",
-    "codemirror/addon/hint/javascript-hint",
-    "codemirror/addon/fold/foldcode",
-    "codemirror/addon/fold/foldgutter",
-    "codemirror/addon/fold/brace-fold",
-    "codemirror/addon/fold/comment-fold",
-    "codemirror/addon/fold/indent-fold",
-];
-
 const CODEMIRROR_GUTTER_MESSAGE_MANAGER =
     "thingworx-ui-platform/features/details/editor/codemirror-gutter-message-manager";
 
@@ -42,46 +21,37 @@ function getAmdContext() {
     return requirejs && requirejs.s && requirejs.s.contexts && requirejs.s.contexts._;
 }
 
-function isAmdModuleKnown(moduleName: string): boolean {
+function getDefinedAmdModule(moduleName: string) {
     const context = getAmdContext();
-    if (!context) {
-        return false;
-    }
-
-    return Boolean(
-        (context.defined && context.defined[moduleName]) ||
-            (context.specified && context.specified[moduleName]) ||
-            (context.registry && context.registry[moduleName])
-    );
+    return context && context.defined ? context.defined[moduleName] : undefined;
 }
 
-function defineAmdModuleIfMissing(moduleName: string, factory: () => any) {
-    if (isAmdModuleKnown(moduleName)) {
-        return;
-    }
-
-    window["define"](moduleName, [], factory);
+function createNoopGutterMessageManager() {
+    return {
+        addByCategory() {},
+        removeByCategory() {},
+        clearByCategory() {},
+        clear() {},
+        add() {},
+        remove() {},
+    };
 }
 
-function installCodeMirrorCompatibilityShim() {
-    CODEMIRROR_COMPAT_MODULES.forEach((moduleName) => {
-        defineAmdModuleIfMissing(moduleName, () => {
-            if (moduleName === "codemirror") {
-                return window["CodeMirror"] || {};
-            }
+function resolveGutterMessageManager(container: any) {
+    const moduleExport = getDefinedAmdModule(CODEMIRROR_GUTTER_MESSAGE_MANAGER);
+    const gutterManagerClass = moduleExport && moduleExport.CodemirrorGutterMessageManager;
+    if (gutterManagerClass) {
+        try {
+            return container.get(gutterManagerClass);
+        } catch (e) {
+            console.warn("Monaco: Failed to resolve CodemirrorGutterMessageManager. Using fallback...", e);
+        }
+    }
 
-            return {};
-        });
-    });
-
-    defineAmdModuleIfMissing(CODEMIRROR_GUTTER_MESSAGE_MANAGER, () => ({
-        CodemirrorGutterMessageManager: class CodemirrorGutterMessageManager {},
-    }));
+    return createNoopGutterMessageManager();
 }
 
 function load() {
-    installCodeMirrorCompatibilityShim();
-
     window["define"](
       "thingworx-ui-platform/features/details/editor/abstract-editor",
       [
@@ -90,8 +60,6 @@ function load() {
         "aurelia-dependency-injection",
         "lodash",
         "jquery",
-        "codemirror",
-        "./codemirror-gutter-message-manager",
         "thingworx-ui-platform/util/common-util",
         "thingworx-ui-platform/util/object-util",
         "thingworx-ui-platform/helpers/loader-helper",
@@ -99,30 +67,12 @@ function load() {
         "thingworx-ui-platform/events/event-helper",
         "thingworx-ui-platform/services/user-service",
         "thingworx-ui-platform/services/entity-service-base",
-        "thingworx-ui-platform/helpers/hotkeys/hotkey-manager",
-        "codemirror/mode/css/css",
-        "codemirror/mode/javascript/javascript",
-        "codemirror/mode/xml/xml",
-        "codemirror/mode/sql/sql",
-        "codemirror/addon/selection/mark-selection",
-        "codemirror/addon/search/search",
-        "codemirror/addon/search/searchcursor",
-        "codemirror/addon/dialog/dialog",
-        "codemirror/addon/edit/matchbrackets",
-        "codemirror/addon/search/match-highlighter",
-        "codemirror/addon/hint/show-hint",
-        "codemirror/addon/hint/javascript-hint",
-        "codemirror/addon/fold/foldcode",
-        "codemirror/addon/fold/foldgutter",
-        "codemirror/addon/fold/brace-fold",
-        "codemirror/addon/fold/comment-fold",
-        "codemirror/addon/fold/indent-fold"
+        "thingworx-ui-platform/helpers/hotkeys/hotkey-manager"
     ],
-    function(exports, I18N, Container, _, $, CodeMirror, CodemirrorGutterMessageManager, CommonUtil, ObjectUtil, LoaderHelper, ChannelNames, EventHelper, u, EntityServiceBase, HotkeyManager) {
+    function(exports, I18N, Container, _, $, CommonUtil, ObjectUtil, LoaderHelper, ChannelNames, EventHelper, u, EntityServiceBase, HotkeyManager) {
         var {UserSessionInfoKeys, UserPreferenceKeys} = u;
         I18N = I18N["I18N"];
         Container = Container["Container"];
-        CodemirrorGutterMessageManager = CodemirrorGutterMessageManager["CodemirrorGutterMessageManager"];
         CommonUtil = CommonUtil["CommonUtil"];
         ObjectUtil = ObjectUtil["ObjectUtil"];
         LoaderHelper = LoaderHelper["LoaderHelper"];
@@ -447,7 +397,7 @@ function load() {
             //== following should be treated as private methods and subject to change without notifiying =====================
             AbstractEditor.prototype._init = function(opts) {
                 let container = Container.instance || new Container();
-                this.gutterMsgManager = container.get(CodemirrorGutterMessageManager);
+                this.gutterMsgManager = resolveGutterMessageManager(container);
                 this.entityService = container.get(EntityServiceBase);
                 this.i18n = container.get(I18N);
                 this._setGuttersOption();
