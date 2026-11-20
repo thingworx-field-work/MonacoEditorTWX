@@ -3,7 +3,8 @@ import { FormattingConflicts } from "monaco-editor/esm/vs/editor/contrib/format/
 import tingle from "tingle.js";
 import { Options as PrettierOptions } from "prettier";
 import { MonacoPrettier } from "./prettier";
-import { MONACO_EDITOR_CONFIGURATION_MODEL } from "../constants";
+import { applyScriptIndentationRules } from "./languageConfiguration";
+import { MONACO_EDITOR_CONFIGURATION_MODEL, PRETTIER_LANGUAGES, diffFromDefaultSettings, modelUriParts } from "../constants";
 
 require("tingle.js/src/tingle.css");
 require("../styles/editorStyle.css");
@@ -61,6 +62,7 @@ export class MonacoCodeEditor {
         actionCallbacks: ActionCallbacks,
         instanceSettings: MonacoInstanceSettings
     ) {
+        applyScriptIndentationRules();
         this._currentEditorSettings = initialSettings;
         this._instanceSettings = instanceSettings;
         // clone the settings and store them
@@ -69,40 +71,46 @@ export class MonacoCodeEditor {
         editorSettings.editor.value = instanceSettings.code;
         editorSettings.editor.readOnly = instanceSettings.readonly;
         editorSettings.editor.language = instanceSettings.language;
+        const modelUri = MonacoCodeEditor.getModelUri(instanceSettings.modelName);
+        // a leftover model from an editor that was not disposed in time would make createModel throw
+        monaco.editor.getModel(modelUri)?.dispose();
         editorSettings.editor.model = monaco.editor.createModel(
             instanceSettings.code,
             instanceSettings.language,
-            monaco.Uri.parse("twx://privateModel/" + instanceSettings.modelName)
+            modelUri
         );
+        this.applyIndentationOptions(editorSettings.editor.model, editorSettings.editor);
+
+        // The providers must exist BEFORE the editor is created: Monaco's formatOnPaste contribution only attaches its
+        // paste listener if a range formatter is already registered when it is constructed.
+        this.registerPrettierProviders(this._instanceSettings.language);
+
         this.monacoEditor = monaco.editor.create(container, editorSettings.editor);
+        // Monaco's own formatOnPaste contribution ends up without a paste listener in this setup (it only evaluates
+        // it on model/config events), so format the pasted range ourselves.
+        this.disposables.push(
+            this.monacoEditor.onDidPaste(async ({ range }) => {
+                if (
+                    !this._currentEditorSettings.editor?.formatOnPaste ||
+                    this.monacoEditor.getOption(monaco.editor.EditorOption.readOnly) ||
+                    range.startLineNumber === range.endLineNumber ||
+                    !this.monacoEditor.getAction("editor.action.formatSelection")?.isSupported()
+                ) {
+                    return;
+                }
+                this.monacoEditor.setSelection(range);
+                await this.monacoEditor.getAction("editor.action.formatSelection").run();
+                const selection = this.monacoEditor.getModel() && this.monacoEditor.getSelection();
+                if (selection) {
+                    // like a normal paste, leave the cursor at the end of the pasted text
+                    this.monacoEditor.setPosition(selection.getEndPosition());
+                }
+            })
+        );
         this.initializePreferenceEditor(actionCallbacks.onPreferencesChanged);
         this.initializeDiffEditor();
         this.monacoEditor.layout();
         this.monacoEditor.focus();
-
-        if (this._currentEditorSettings.prettier?.enabled) {
-            const monacoPrettier = new MonacoPrettier(() => this._currentEditorSettings.prettier.options);
-            this.disposables.push(
-                monaco.languages.registerDocumentFormattingEditProvider(this._instanceSettings.language, monacoPrettier)
-            );
-            this.disposables.push(
-                monaco.languages.registerDocumentRangeFormattingEditProvider(
-                    this._instanceSettings.language,
-                    monacoPrettier
-                )
-            );
-            // Because of https://github.com/microsoft/vscode/blob/main/src/vs/editor/editor.api.ts#L19-L21
-            // The first formatter is selected, which is the builtin worker one
-            // We must always select the "prettier" formatter, so overwrite it here
-            FormattingConflicts.setFormatterSelector((formatters) => {
-                const prettierFormatter = formatters.find((f) => f instanceof MonacoPrettier);
-                if (prettierFormatter) {
-                    return Promise.resolve(prettierFormatter);
-                }
-                // otherwise just select the first one
-                return Promise.resolve(formatters[0]);
-            });
-        }
     }
 
     /**
@@ -199,6 +207,29 @@ export class MonacoCodeEditor {
     }
 
     /**
+     * Indentation is a model option in Monaco, `editor.updateOptions` doesn't change it for an existing model.
+     * Explicit tabSize/insertSpaces from the settings disable indentation detection, unless the user
+     * explicitly asked for detection.
+     */
+    private applyIndentationOptions(model: monaco.editor.ITextModel | undefined, options?: monaco.editor.IGlobalEditorOptions) {
+        if (!model || !options) {
+            return;
+        }
+        const modelOptions: monaco.editor.ITextModelUpdateOptions = {};
+        if (options.tabSize != null) {
+            modelOptions.tabSize = options.tabSize;
+        }
+        if (options.insertSpaces != null) {
+            modelOptions.insertSpaces = options.insertSpaces;
+        }
+        if (Object.keys(modelOptions).length > 0 && options.detectIndentation !== true) {
+            model.updateOptions(modelOptions);
+        } else if (options.detectIndentation === true) {
+            model.detectIndentation(options.insertSpaces ?? true, options.tabSize ?? 4);
+        }
+    }
+
+    /**
      * Set the editor as read-only or not
      */
     public setReadOnlyStatus(readOnly: boolean) {
@@ -212,6 +243,14 @@ export class MonacoCodeEditor {
      */
     public setEditorSettings(settings: monaco.editor.IEditorConstructionOptions) {
         this.monacoEditor.updateOptions(settings);
+    }
+
+    /**
+     * Builds the model URI without parsing, so a name containing "#" or "?" is not cut off as a fragment or query
+     * (which would make two different subscriptions or services share a URI).
+     */
+    public static getModelUri(modelName: string): monaco.Uri {
+        return monaco.Uri.from(modelUriParts(modelName));
     }
 
     /**
@@ -272,16 +311,44 @@ export class MonacoCodeEditor {
      * Changes the language of the editor to the given language.
      * @param language Language to set
      */
+    /**
+     * Registers the Prettier formatters for a language. Called for the initial language and again when the
+     * language switches (JS <-> TS), otherwise Format Document would use the built-in formatter after a switch.
+     */
+    private registerPrettierProviders(language: string) {
+        if (
+            this._currentEditorSettings.prettier?.enabled &&
+            PRETTIER_LANGUAGES.includes(language)
+        ) {
+            const monacoPrettier = new MonacoPrettier(() => this._currentEditorSettings.prettier.options);
+            this.disposables.push(monaco.languages.registerDocumentFormattingEditProvider(language, monacoPrettier));
+            this.disposables.push(monaco.languages.registerDocumentRangeFormattingEditProvider(language, monacoPrettier));
+            // Because of https://github.com/microsoft/vscode/blob/main/src/vs/editor/editor.api.ts#L19-L21
+            // The first formatter is selected, which is the builtin worker one
+            // We must always select the "prettier" formatter, so overwrite it here
+            FormattingConflicts.setFormatterSelector((formatters) => {
+                const prettierFormatter = formatters.find((f) => f instanceof MonacoPrettier);
+                if (prettierFormatter) {
+                    return Promise.resolve(prettierFormatter);
+                }
+                // otherwise just select the first one
+                return Promise.resolve(formatters[0]);
+            });
+        }
+    }
+
     public changeLanguage(language: string, code: string) {
         if (this._instanceSettings.language != language) {
             this.monacoEditor.getModel().dispose();
             let model = monaco.editor.createModel(
                 code,
                 language,
-                monaco.Uri.parse("twx://privateModel/" + this._instanceSettings.modelName)
+                MonacoCodeEditor.getModelUri(this._instanceSettings.modelName)
             );
+            this.applyIndentationOptions(model, this._currentEditorSettings.editor);
             this.monacoEditor.setModel(model);
             this._instanceSettings.language = language;
+            this.registerPrettierProviders(language);
         }
     }
 
@@ -316,7 +383,18 @@ export class MonacoCodeEditor {
      * @param code Code to set in the editor
      */
     public setValue(code: string): void {
-        this.monacoEditor.setValue(code);
+        const model = this.monacoEditor.getModel();
+        if (!model) {
+            this.monacoEditor.setValue(code);
+            return;
+        }
+        if (model.getValue() === code) {
+            return;
+        }
+        // an edit instead of setValue keeps the undo history (setValue wipes it)
+        this.monacoEditor.pushUndoStop();
+        model.pushEditOperations([], [{ range: model.getFullModelRange(), text: code }], () => null);
+        this.monacoEditor.pushUndoStop();
     }
 
     /**
@@ -337,7 +415,8 @@ export class MonacoCodeEditor {
 
         function stripUrlCredentials(str: string) {
             try {
-                const url = new URL(str, window.location.origin);
+                // a relative path (the runtime widget uses "../Common/extensions/...") is relative to the page, not to the origin
+                const url = new URL(str, str ? window.location.href : window.location.origin);
                 url.username = "";
                 url.password = "";
                 return url.toString();
@@ -443,7 +522,76 @@ export class MonacoCodeEditor {
     public setGutterMarker() {}
 
     public hasFocus() {
-        this.monacoEditor.hasTextFocus();
+        return this.monacoEditor.hasTextFocus();
+    }
+
+    // --- CodeMirror compatibility: Composer 10.x calls these on `this.codeMirror` ---
+
+    /** Text of the current selection (CodeMirror: getSelectedText) */
+    public getSelectedText(): string {
+        const model = this.monacoEditor.getModel();
+        const selection = this.monacoEditor.getSelection();
+        return model && selection ? model.getValueInRange(selection) : "";
+    }
+
+    /** Cursor position in CodeMirror's 0-based {line, ch} form */
+    public getCursor(start?: boolean | string): { line: number; ch: number } {
+        const selection = this.monacoEditor.getSelection();
+        const position = !selection
+            ? this.monacoEditor.getPosition()
+            : start === true || start === "from" || start === "start"
+              ? selection.getStartPosition()
+              : selection.getEndPosition();
+        return { line: (position?.lineNumber ?? 1) - 1, ch: (position?.column ?? 1) - 1 };
+    }
+
+    /** Scrolls to a 0-based line and briefly highlights it (used by "go to line" from test output) */
+    public highlightLine(line: number | { line: number }) {
+        const lineNumber = (typeof line === "number" ? line : line?.line ?? 0) + 1;
+        const model = this.monacoEditor.getModel();
+        if (!model || lineNumber < 1 || lineNumber > model.getLineCount()) {
+            return;
+        }
+        if (!document.getElementById("monaco-twx-highlight-style")) {
+            const style = document.createElement("style");
+            style.id = "monaco-twx-highlight-style";
+            style.textContent = ".monaco-twx-highlight-line { background: rgba(255, 213, 0, 0.35); }";
+            document.head.appendChild(style);
+        }
+        this.monacoEditor.revealLineInCenter(lineNumber);
+        this.monacoEditor.setPosition({ lineNumber, column: 1 });
+        const collection = this.monacoEditor.createDecorationsCollection([
+            {
+                range: new monaco.Range(lineNumber, 1, lineNumber, 1),
+                options: { isWholeLine: true, className: "monaco-twx-highlight-line" },
+            },
+        ]);
+        setTimeout(() => collection.clear(), 1500);
+    }
+
+    public openSearchPanel() {
+        this.monacoEditor.trigger("external", "actions.find", undefined);
+    }
+
+    public closeSearchPanel() {
+        this.monacoEditor.trigger("external", "closeFindWidget", undefined);
+    }
+
+    public getWrapperElement(): HTMLElement {
+        return this.monacoEditor.getContainerDomNode();
+    }
+
+    public requestMeasure() {
+        this.monacoEditor.layout();
+    }
+
+    public getCurrentState() {
+        return this.monacoEditor.saveViewState();
+    }
+
+    /** CodeMirror 6 `dispatch` is not supported; ignore it instead of throwing */
+    public dispatch(..._args: unknown[]) {
+        console.warn("MonacoScriptEditor: codeMirror.dispatch is not supported");
     }
 
     public setCursor() {
@@ -455,9 +603,11 @@ export class MonacoCodeEditor {
 
         let confEditor: monaco.editor.IStandaloneCodeEditor;
         let settingsModel: monaco.editor.ITextModel;
+        let settingsAtOpen: string;
         let modal = new tingle.modal({
             cssClass: ["tingle-popup-container"],
             onOpen: function () {
+                settingsAtOpen = JSON.stringify(self._currentEditorSettings);
                 settingsModel = monaco.editor.createModel(
                     JSON.stringify(self._currentEditorSettings, undefined, 4),
                     "json",
@@ -489,6 +639,8 @@ export class MonacoCodeEditor {
                             monaco.editor.setTheme(expandedOptions.editor.theme);
                         }
                         self.monacoEditor.updateOptions(expandedOptions.editor);
+                        // indentation is a model option, so it has to be pushed to the model too
+                        self.applyIndentationOptions(self.monacoEditor.getModel(), expandedOptions.editor);
                         self._currentEditorSettings = expandedOptions;
                     } catch (e) {
                         return false;
@@ -498,7 +650,10 @@ export class MonacoCodeEditor {
             },
             onClose: function () {
                 // propagate the preference changed to the parent for storage, etc
-                onPreferencesChanged(self._currentEditorSettings);
+                // only when something changed, and only the values that differ from the defaults
+                if (JSON.stringify(self._currentEditorSettings) !== settingsAtOpen) {
+                    onPreferencesChanged(diffFromDefaultSettings(self._currentEditorSettings));
+                }
                 confEditor.dispose();
                 settingsModel.dispose();
             },
@@ -509,7 +664,7 @@ export class MonacoCodeEditor {
         this.monacoEditor.addAction({
             id: "viewConfAction",
             label: "View Configuration",
-            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Shift | monaco.KeyCode.Backquote],
+            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Backquote],
             run: () => {
                 modal.setContent(`<h2>Config Editor. Use Intellisense or check
                                     <a href='https://code.visualstudio.com/docs/getstarted/settings#_default-settings'>here</a> for available options.</h2>
@@ -526,11 +681,12 @@ export class MonacoCodeEditor {
         let self = this;
 
         let diffEditor: monaco.editor.IStandaloneDiffEditor;
+        let originalModel: monaco.editor.ITextModel;
 
         let modal = new tingle.modal({
             cssClass: ["tingle-popup-container"],
             onOpen: function () {
-                let originalModel = monaco.editor.createModel(
+                originalModel = monaco.editor.createModel(
                     self._instanceSettings.code,
                     self._instanceSettings.language
                 );
@@ -557,6 +713,8 @@ export class MonacoCodeEditor {
             },
             onClose: function () {
                 diffEditor.dispose();
+                // the original model was created on open and would otherwise leak on every diff
+                originalModel?.dispose();
             },
         });
         this.modals.push(modal);
@@ -568,7 +726,8 @@ export class MonacoCodeEditor {
             label: "View Diff",
             contextMenuGroupId: "service",
             contextMenuOrder: 1.4,
-            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK],
+            // a chord (Ctrl+K, D) so Monaco's other Ctrl+K chords (comment, fold, ...) keep working
+            keybindings: [monaco.KeyMod.chord(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, monaco.KeyCode.KeyD)],
             keybindingContext: null,
             run: (ed) => {
                 modal.setContent(`<h2>Diff Editor</h2>
