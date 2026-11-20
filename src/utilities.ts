@@ -1,5 +1,4 @@
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import { DISALLOWED_ENTITY_CHARS } from './constants';
 import { DataShape, FieldDefinition } from './types';
 
 const MIME_APPLICATION_JSON = "application/json";
@@ -19,6 +18,9 @@ export async function getDataShapeDefinitions(): Promise<DataShape[]> {
             'Accept': MIME_TEXT_XML
         }
     });
+    if (!response.ok) {
+        return [];
+    }
     const xmlText = await response.text();
     const document = new DOMParser().parseFromString(xmlText, MIME_TEXT_XML);
 
@@ -44,14 +46,25 @@ export async function getDataShapeDefinitions(): Promise<DataShape[]> {
  * @param  {string} entityType Thingworx Entity Type.
  * @param  {string} searchTerm The entity to search for. Only the prefix can be specified.
  */
-export async function spotlightSearch(entityType, searchTerm): Promise<any> {
+const SPOTLIGHT_CACHE_TTL_MS = 60 * 1000;
+const SPOTLIGHT_CACHE_MAX_ENTRIES = 200;
+const spotlightCache = new Map<string, { time: number, result: any }>();
+
+export async function spotlightSearch(entityType, searchTerm, signal?: AbortSignal): Promise<any> {
+    // typing "Things[\"ab" then "abc" asks for the same prefixes again and again, so remember the results for the session
+    const cacheKey = `${entityType}|${searchTerm}`;
+    const cached = spotlightCache.get(cacheKey);
+    if (cached && Date.now() - cached.time < SPOTLIGHT_CACHE_TTL_MS) {
+        return cached.result;
+    }
     const response = await fetch(platformUrl(`/Thingworx/Resources/SearchFunctions/Services/SpotlightSearch`), {
         method: 'POST',
+        signal,
         body: JSON.stringify({
             searchExpression: searchTerm + "*",
             withPermissions: false,
             isAscending: false,
-            maxItems: 500,
+            maxItems: 100,
             types: {
                 // todo: proper fix for MediaEntities -> MediaEntity
                 items: [entityType == "MediaEntities" ? "MediaEntity" : entityType.slice(0, -1)]
@@ -64,7 +77,17 @@ export async function spotlightSearch(entityType, searchTerm): Promise<any> {
             'Accept': MIME_APPLICATION_JSON
         }
     });
-    return response.json();
+    if (!response.ok) {
+        return { rows: [] };
+    }
+    const result = await response.json();
+    spotlightCache.delete(cacheKey);
+    if (spotlightCache.size >= SPOTLIGHT_CACHE_MAX_ENTRIES) {
+        // evict the oldest entry (Map keeps insertion order)
+        spotlightCache.delete(spotlightCache.keys().next().value);
+    }
+    spotlightCache.set(cacheKey, { time: Date.now(), result });
+    return result;
 };
 
 /**
@@ -72,31 +95,31 @@ export async function spotlightSearch(entityType, searchTerm): Promise<any> {
  *
  * @param  {string} snippets to load
  */
+// The snippet files never change, so build the completion items once; only the range differs per request
+const snippetItemCache = new WeakMap<object, Omit<monaco.languages.CompletionItem, "range">[]>();
+
 export function loadSnippets(snippets, range: monaco.Range): monaco.languages.CompletionList {
-    let result: monaco.languages.CompletionList = {
-        suggestions: []
-    };
-    for (let key in snippets) {
-        if (snippets.hasOwnProperty(key)) {
-            result.suggestions.push({
-                kind: monaco.languages.CompletionItemKind.Snippet,
-                insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                label: snippets[key].prefix,
-                documentation: snippets[key].description,
-                insertText: snippets[key].body.join("\n"),
-                range: range
-            });
+    let items = snippetItemCache.get(snippets);
+    if (!items) {
+        items = [];
+        for (let key in snippets) {
+            if (snippets.hasOwnProperty(key)) {
+                items.push({
+                    kind: monaco.languages.CompletionItemKind.Snippet,
+                    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                    label: snippets[key].prefix,
+                    documentation: snippets[key].description,
+                    insertText: snippets[key].body.join("\n"),
+                });
+            }
         }
+        snippetItemCache.set(snippets, items);
     }
-    return result;
+    return { suggestions: items.map((item) => ({ ...item, range })) };
 };
 
-/**
- * Sanitizes an entity name to be a valid javascript declaration
- */
-export function sanitizeEntityName(entityName: string): string {
-    return entityName.replace(DISALLOWED_ENTITY_CHARS, "");
-}
+// lives in its own file so it can be unit tested without loading monaco
+export { sanitizeEntityName } from './entityNames';
 
 export async function getScriptFunctionLibraries(): Promise<any[]> {
     const response = await fetch(platformUrl(`/Thingworx/ScriptFunctionLibraries`), {
@@ -104,17 +127,25 @@ export async function getScriptFunctionLibraries(): Promise<any[]> {
             'Accept': MIME_APPLICATION_JSON
         }
     });
-    const libraries = await response.json();
-    const result = [];
-    for (const scriptFunction of libraries.rows) {
-        const scriptResponse = await fetch(platformUrl(`/Thingworx/ScriptFunctionLibraries/${scriptFunction.name}/FunctionDefinitions`), {
-            headers: {
-                'Accept': MIME_APPLICATION_JSON
-            }
-        });
-        result.push(await scriptResponse.json());
+    if (!response.ok) {
+        return [];
     }
-    return result;
+    const libraries = await response.json();
+    // fetch all libraries in parallel instead of one after another
+    const definitions = await Promise.all(libraries.rows.map(async (scriptFunction: { name: string }) => {
+        try {
+            const scriptResponse = await fetch(platformUrl(`/Thingworx/ScriptFunctionLibraries/${scriptFunction.name}/FunctionDefinitions`), {
+                headers: {
+                    'Accept': MIME_APPLICATION_JSON
+                }
+            });
+            return scriptResponse.ok ? await scriptResponse.json() : undefined;
+        } catch (e) {
+            console.warn(`Monaco: could not load script function library ${scriptFunction.name}`, e);
+            return undefined;
+        }
+    }));
+    return definitions.filter((definition) => definition !== undefined);
 }
 
 export function isGenericService(serviceDefinition: { sourceName: string, sourceType: string }): boolean {
@@ -127,6 +158,10 @@ export async function getEntityMetadata(entityType: string, entityName: string):
             'Accept': MIME_APPLICATION_JSON
         }
     });
+    if (!response.ok) {
+        // a missing or forbidden entity must not break typings for the entities after it
+        return undefined;
+    }
     return response.json();
 }
 
@@ -136,15 +171,41 @@ export async function getEntityInstancesMetadata(entityType: string, entityName:
             'Accept': MIME_APPLICATION_JSON
         }
     });
+    if (!response.ok) {
+        return undefined;
+    }
     return response.json();
 }
 
-export async function getThingPropertyValues(entityName: string): Promise<any> {
+// every editor focus asks for the properties of "me"; a short cache turns a burst of focus events into one request
+const PROPERTY_CACHE_TTL_MS = 10 * 1000;
+const propertyValueCache = new Map<string, { time: number, promise: Promise<any> }>();
+
+export function getThingPropertyValues(entityName: string): Promise<any> {
+    const cached = propertyValueCache.get(entityName);
+    if (cached && Date.now() - cached.time < PROPERTY_CACHE_TTL_MS) {
+        return cached.promise;
+    }
+    const promise = fetchThingPropertyValues(entityName);
+    propertyValueCache.set(entityName, { time: Date.now(), promise });
+    // a failed request must not be remembered
+    promise.then((values) => {
+        if (values === undefined && propertyValueCache.get(entityName)?.promise === promise) {
+            propertyValueCache.delete(entityName);
+        }
+    }, () => propertyValueCache.delete(entityName));
+    return promise;
+}
+
+async function fetchThingPropertyValues(entityName: string): Promise<any> {
     const response = await fetch(platformUrl(`/Thingworx/Things/${encodeURIComponent(entityName)}/Properties`), {
         headers: {
             'Accept': MIME_APPLICATION_JSON
         }
     });
+    if (!response.ok) {
+        return {};
+    }
     const data = await response.json();
-    return data.rows[0];
+    return data.rows?.[0] ?? {};
 }

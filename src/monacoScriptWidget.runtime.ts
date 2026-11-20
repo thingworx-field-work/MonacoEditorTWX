@@ -1,4 +1,5 @@
 import { TWService, TWProperty, TWWidgetDefinition } from 'typescriptwebpacksupport/widgetRuntimeSupport';
+import { parseSettings } from './parseSettings';
 // when using monaco as a widget, make sure all scripts are loaded from the correct path
 __webpack_public_path__ = '../Common/extensions/MonacoScriptEditor/ui/MonacoScriptEditor/';
 @TWWidgetDefinition
@@ -7,24 +8,25 @@ class MonacoCodeEditorWidget extends TWRuntimeWidget {
 
     @TWProperty("Code")
     set code(value: string) {
-        if (value != this.monacoEditor.getValue()) {
+        // afterRender is async: bindings can arrive before the editor exists (it reads the values itself once created)
+        if (this.monacoEditor && value != this.monacoEditor.getValue()) {
             this.monacoEditor.setValue(value);
         }
     };
 
     @TWProperty("EditorSettings")
     set editorSettings(value: any) {
-        this.monacoEditor.setEditorSettings(JSON.parse(value));
+        this.monacoEditor?.setEditorSettings(parseSettings(value));
     };
 
     @TWProperty("ReadOnly")
     set readOnly(value: boolean) {
-        this.monacoEditor.setReadOnlyStatus(value);
+        this.monacoEditor?.setReadOnlyStatus(value);
     };
 
     @TWProperty("Language")
     set language(language: string) {
-        this.monacoEditor.changeLanguage(language, this.code);
+        this.monacoEditor?.changeLanguage(language, this.code);
     };
 
     renderHtml(): string {
@@ -33,7 +35,7 @@ class MonacoCodeEditorWidget extends TWRuntimeWidget {
 
     async afterRender(): Promise<void> {
         // auto layout should be enabled
-        const editorSettings = JSON.parse(this.editorSettings);
+        const editorSettings = parseSettings(this.editorSettings);
         editorSettings.automaticLayout = true;
         const editorNamespace = await import("./editors/basicCodeEditor");
         this.monacoEditor = new editorNamespace.MonacoCodeEditor(this.jqElement[0], <any>{editor: editorSettings}, {
@@ -61,7 +63,7 @@ class MonacoCodeEditorWidget extends TWRuntimeWidget {
     }
 
     beforeDestroy?(): void {
-        this.monacoEditor.dispose();
+        this.monacoEditor?.dispose();
     }
 
     fallbackCopyTextToClipboard(text) {
