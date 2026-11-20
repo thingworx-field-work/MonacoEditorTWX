@@ -4,7 +4,11 @@ import { sanitizeEntityName, getDataShapeDefinitions, getScriptFunctionLibraries
 import { ENTITY_TYPES } from "../../constants";
 import { DataShape, EntityMetadataInformation } from "../../types";
 
+const DATASHAPE_CACHE_TTL_MS = 60 * 1000;
+
 export class ThingworxToTypescriptGenerator {
+    /** Shared by all editors: the DataShape export is large and the same for everyone */
+    private static dataShapeCache: { time: number; promise?: Promise<DataShape[]> } = { time: 0 };
     private scriptManager: WorkerScriptManager;
 
     constructor(scriptManager: WorkerScriptManager) {
@@ -13,7 +17,14 @@ export class ThingworxToTypescriptGenerator {
 
     public async generateDataShapeCode() {
         try {
-            let dataShapes = await getDataShapeDefinitions();
+            // exporting every DataShape is expensive and this runs on each editor focus: cache for a short while
+            const cache = ThingworxToTypescriptGenerator.dataShapeCache;
+            if (!cache.promise || Date.now() - cache.time > DATASHAPE_CACHE_TTL_MS) {
+                cache.time = Date.now();
+                cache.promise = getDataShapeDefinitions();
+                cache.promise.catch(() => (cache.promise = undefined));
+            }
+            let dataShapes = await cache.promise;
             this.addDataShapesAsInterfaces(dataShapes);
             this.addDataShapesCollection(dataShapes);
         } catch (reason) {
@@ -104,7 +115,7 @@ export class ThingworxToTypescriptGenerator {
         let entityCollectionsDefs = "";
         // now add all the entity collections
         for (const entityType of ENTITY_TYPES) {
-            entityCollectionsDefs += "const " + entityType + ": twx." + entityType + "Interface;\n";
+            entityCollectionsDefs += "const " + entityType + ": twx." + entityType + "Collection;\n";
         }
 
         this.scriptManager.addExtraLib(entityCollectionsDefs, "thingworx/entityCollections.d.ts");
@@ -149,16 +160,17 @@ export class ThingworxToTypescriptGenerator {
                     if (parameterDef.description) {
                         jsonDocInfoElements.push(parameterDef.description);
                     }
-                    if (parameterDef.aspects.dataShape) {
+                    // some generic / extension services have no aspects at all
+                    if (parameterDef.aspects?.dataShape) {
                         jsonDocInfoElements.push(`DataShape: ${parameterDef.aspects.dataShape}`);
                     }
                     namespaceDefinition += this.generateJDocWithContent(jsonDocInfoElements.join(" - "));
-                    namespaceDefinition += `${parameterDef.name}${(parameterDef.aspects.isRequired ? "" : "?")}:${this.getTypescriptBaseType(parameterDef)};\n`;
+                    namespaceDefinition += `${parameterDef.name}${(parameterDef.aspects?.isRequired ? "" : "?")}:${this.getTypescriptBaseType(parameterDef)};\n`;
                     // generate a nice description of the service params. This includes the name, if it's required, basetype and description
-                    serviceParamList.push(oneLine`  * _${parameterDef.name}${(parameterDef.aspects.isRequired ? "" : "?")}_: ${this.getTypescriptBaseType(parameterDef)}
+                    serviceParamList.push(oneLine`  * _${parameterDef.name}${(parameterDef.aspects?.isRequired ? "" : "?")}_: ${this.getTypescriptBaseType(parameterDef)}
                                                         ${parameterDef.description ? " - " + parameterDef.description : ""}`);
 
-                    if(parameterDef.aspects.isRequired) {
+                    if(parameterDef.aspects?.isRequired) {
                         requiredParamCount++;
                     }
                 }
@@ -193,7 +205,7 @@ export class ThingworxToTypescriptGenerator {
             // generate an export for each property
             if (typeof propertyData[property.name] == "string") {
                 classDefinition += this.generateJDocWithContent(property.description);
-                classDefinition += `readonly ${property.name} = "${oneLine(propertyData[property.name].replace(/"/g, '\\"').substring(0, 100))}";\n`;
+                classDefinition += `readonly ${property.name} = ${JSON.stringify(oneLine(propertyData[property.name].substring(0, 100)))};\n`;
             } else {
                 classDefinition += this.generateJDocWithContent(property.description);
                 classDefinition += `${property.name}: ${this.getTypescriptBaseType(property)};\n`;
@@ -208,6 +220,9 @@ export class ThingworxToTypescriptGenerator {
     public async generateGenericThingDefinition() {
         let genericThingMetadata = await getEntityInstancesMetadata("ThingTemplates", "GenericThing");
         
+        if (!genericThingMetadata) {
+            return;
+        }
         let genericThingDefinition = this.generateTypeScriptDefinitions(genericThingMetadata, {}, 'GenericThing', true, true, true);
         this.scriptManager.addExtraLib(genericThingDefinition, "ThingworxGenericThing.d.ts");
     }
@@ -215,12 +230,21 @@ export class ThingworxToTypescriptGenerator {
     /**
     * Declares the me object and the inputs of the service
     */
-    public generateServiceGlobals(serviceMetadata: { parameterDefinitions: { [name: string]: any } }, entityName: string) {
+    public generateServiceGlobals(serviceMetadata: { parameterDefinitions: { [name: string]: any } }, entityName: string, events?: { [alias: string]: any[] }) {
         var definition = `const me = new twx.${entityName}();`;
         for (var key in serviceMetadata.parameterDefinitions) {
             if (!serviceMetadata.parameterDefinitions.hasOwnProperty(key)) continue;
             var inputDef = serviceMetadata.parameterDefinitions[key];
             definition += `let ${key}: ${this.getTypescriptBaseType(inputDef)};`;
+        }
+        if (events) {
+            // v2 (multi-event) subscriptions scope the inputs per event: events["<alias>"].<field>
+            const aliases = Object.keys(events).map((alias) => {
+                const fields = (events[alias] || []).filter((f) => f && f.name && f.baseType)
+                    .map((f) => `${JSON.stringify(f.name)}: ${this.getTypescriptBaseType(f)};`).join(" ");
+                return `${JSON.stringify(alias)}: { ${fields} };`;
+            });
+            definition += `const events: { ${aliases.join(" ")} };`;
         }
         return definition;
     }
@@ -241,7 +265,7 @@ export class ThingworxToTypescriptGenerator {
      */
     private generateJDocWithContent(content: string) {
         if (content) {
-            const list = content.split(/\r?\n/).map((val) => `* ${val}`).join("\n");
+            const list = content.split(/\r?\n/).map((val) => `* ${val.replace(/\*\//g, "*\\/")}`).join("\n");
             return `\n/**\n${list}\n*/\n`;
         } else {
             return "";
@@ -253,6 +277,6 @@ export class ThingworxToTypescriptGenerator {
      * @param content Multiline content that needs to be wrapped across a long jdoc
      */
     private handleMultilineJDocContent(content) {
-        return content ? content.split(/\r?\n/).map((val, idx) => `${idx != 0 ? "*" : ""} ${val}`).join("\n") : "";
+        return content ? content.split(/\r?\n/).map((val, idx) => `${idx != 0 ? "*" : ""} ${val.replace(/\*\//g, "*\\/")}`).join("\n") : "";
     }
 }

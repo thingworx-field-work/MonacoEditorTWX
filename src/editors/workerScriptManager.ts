@@ -34,7 +34,16 @@ export class WorkerScriptManager {
         });
     }
 
+    /** Set when the owning editor is closed: late async results (metadata, typings) must not register libs afterwards */
+    private disposed = false;
+
     addExtraLib(code, name): [monaco.IDisposable, monaco.IDisposable] {
+        if (this.disposed) {
+            const noop = { dispose() { } };
+            return [noop, noop];
+        }
+        // adding a lib that already exists would otherwise orphan the previous registration
+        this.disposeLib(name);
         let disposables: [monaco.IDisposable, monaco.IDisposable] =  [this.typescriptDefaults.addExtraLib(code, name), this.javascriptDefaults.addExtraLib(code, name)];
         this.libNames[name] = disposables;
         return disposables;
@@ -44,6 +53,7 @@ export class WorkerScriptManager {
         if(this.libNames[name]) {
             this.libNames[name][0].dispose();
             this.libNames[name][1].dispose();
+            delete this.libNames[name];
         }
     }
 
@@ -63,7 +73,8 @@ export class WorkerScriptManager {
     }
 
     disposeAllLibs() {
-        for (const lib in this.libNames) {
+        this.disposed = true;
+        for (const lib of Object.keys(this.libNames)) {
             this.disposeLib(lib);
         }
     }
