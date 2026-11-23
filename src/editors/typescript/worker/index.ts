@@ -174,10 +174,10 @@ const worker: import("./types").CustomTSWebWorkerFactory = (TypeScriptWorker, ts
         schedule: "SCHEDULE",
 
         VARIANT: "VARIANT",
-        variant: "variant",
+        variant: "VARIANT",
 
         GUID: "GUID",
-        guid: "GUILD",
+        guid: "GUID",
 
         BLOB: "BLOB",
         blob: "BLOB",

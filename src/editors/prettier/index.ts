@@ -1,5 +1,5 @@
-import { CancellationToken, editor, languages, Range } from "monaco-editor";
-import type { Plugin, Options as PrettierOptions, SupportLanguage as PrettierSupportLanguage } from "prettier";
+import type { CancellationToken, editor, languages, Range } from "monaco-editor";
+import type { Plugin, Options as PrettierOptions } from "prettier";
 
 /**
  * Uses prettier to format code in monaco by using DocumentRangeFormattingEditProvider
@@ -27,6 +27,8 @@ export class MonacoPrettier
             rangeStart: document.getOffsetAt(range.getStartPosition()),
             force: false,
             languageId: document.getLanguageId(),
+            tabSize: options?.tabSize,
+            insertSpaces: options?.insertSpaces,
         });
     }
 
@@ -38,20 +40,46 @@ export class MonacoPrettier
         return this.provideEdits(document, {
             force: false,
             languageId: document.getLanguageId(),
+            tabSize: options?.tabSize,
+            insertSpaces: options?.insertSpaces,
         });
     }
     private provideEdits = async (
         document: editor.ITextModel,
         options: FormattingOptions
     ): Promise<languages.TextEdit[]> => {
-        const result = await this.format(document.getValue(), options);
-        if (!result) {
+        const original = document.getValue();
+        const result = await this.format(original, options);
+        if (!result || result === original) {
             return [];
         }
+        // Replace only the part that changed instead of the whole document, so the cursor and the undo step stay small
+        let start = 0;
+        const maxStart = Math.min(original.length, result.length);
+        while (start < maxStart && original.charCodeAt(start) === result.charCodeAt(start)) {
+            start++;
+        }
+        let originalEnd = original.length;
+        let resultEnd = result.length;
+        while (
+            originalEnd > start &&
+            resultEnd > start &&
+            original.charCodeAt(originalEnd - 1) === result.charCodeAt(resultEnd - 1)
+        ) {
+            originalEnd--;
+            resultEnd--;
+        }
+        const startPosition = document.getPositionAt(start);
+        const endPosition = document.getPositionAt(originalEnd);
         return [
             {
-                range: document.getFullModelRange(),
-                text: result,
+                range: {
+                    startLineNumber: startPosition.lineNumber,
+                    startColumn: startPosition.column,
+                    endLineNumber: endPosition.lineNumber,
+                    endColumn: endPosition.column,
+                },
+                text: result.substring(start, resultEnd),
             },
         ];
     };
@@ -93,7 +121,7 @@ export class MonacoPrettier
         }
 
         try {
-            const formattedText = prettierInstance.format(text, {
+            const formattedText = await prettierInstance.format(text, {
                 ...prettierOptions,
                 parser: parser,
                 plugins: plugins,
@@ -111,17 +139,26 @@ export class MonacoPrettier
         formattingOptions: FormattingOptions
     ): Partial<PrettierOptions> {
         let rangeFormattingOptions: RangeFormattingOptions | undefined;
-        if (formattingOptions.rangeEnd && formattingOptions.rangeStart) {
+        if (formattingOptions.rangeEnd != null && formattingOptions.rangeStart != null) {
             rangeFormattingOptions = {
                 rangeEnd: formattingOptions.rangeEnd,
                 rangeStart: formattingOptions.rangeStart,
             };
         }
 
+        // Monaco's indentation settings are the defaults; explicit prettier options win
+        const editorIndentation: PrettierOptions = {};
+        if (formattingOptions.tabSize != null) {
+            editorIndentation.tabWidth = formattingOptions.tabSize;
+        }
+        if (formattingOptions.insertSpaces != null) {
+            editorIndentation.useTabs = !formattingOptions.insertSpaces;
+        }
+
         const options: PrettierOptions = {
-            ...configOptions,
-            ...(rangeFormattingOptions || {}),
+            ...editorIndentation,
             ...(configOptions || {}),
+            ...(rangeFormattingOptions || {}),
         };
 
         if (formattingOptions.force && options.requirePragma === true) {
@@ -137,6 +174,10 @@ export interface FormattingOptions {
     rangeEnd?: number;
     force: boolean;
     languageId: string;
+    /** Monaco's tab size, used as the default `tabWidth` */
+    tabSize?: number;
+    /** Monaco's insertSpaces, used as the default `useTabs` (inverted) */
+    insertSpaces?: boolean;
 }
 export interface RangeFormattingOptions {
     rangeStart: number;

@@ -33,13 +33,13 @@ export class ServiceEditor extends MonacoCodeEditor {
             contextMenuOrder: 1.6,
             run: callbacks.onDone
         });
-        // action triggered by ctrl+y
+        // action triggered by ctrl+shift+y (ctrl+y is Redo)
         this.monacoEditor.addAction({
             id: "testCodeAction",
             label: "Test Service",
             contextMenuGroupId: "service",
             contextMenuOrder: 1.7,
-            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY],
+            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyY],
             run: callbacks.onTest
         });
         // action triggered by ctrl+q
